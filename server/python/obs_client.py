@@ -41,33 +41,45 @@ CROP_REGION = {
 # ============== HTTP 服务器 ==============
 class QuietHTTPHandler(SimpleHTTPRequestHandler):
     """静默HTTP处理器"""
+    def __init__(self, *args, **kwargs):
+        # 获取web目录
+        server_python_dir = os.path.dirname(os.path.abspath(__file__))
+        self.web_root = os.path.join(os.path.dirname(os.path.dirname(server_python_dir)), 'web')
+        super().__init__(*args, directory=self.web_root, **kwargs)
+    
     def log_message(self, format, *args):
         pass  # 抑制日志
-
+    
     def do_GET(self):
+        # 自定义路由
         if self.path == '/' or self.path == '/index.html':
-            self.path = '/web/index.html'
+            self.path = '/index.html'
         return SimpleHTTPRequestHandler.do_GET(self)
 
 
 def start_http_server():
     """启动HTTP服务器"""
-    # obs_client.py 在 server/python/，项目根目录在上一级的上一级
     server_python_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(os.path.dirname(server_python_dir))  # server/python/../../
-    web_dir = os.path.join(project_root, 'web')
+    web_dir = os.path.join(os.path.dirname(os.path.dirname(server_python_dir)), 'web')
     
-    print(f"📁 项目目录: {project_root}")
     print(f"📁 Web目录: {web_dir}")
     
     if not os.path.exists(web_dir):
-        print(f"❌ Web目录不存在: {web_dir}")
+        print(f"❌ Web目录不存在")
         return
-        
+    
+    # 直接使用web目录作为工作目录
+    original_cwd = os.getcwd()
     os.chdir(web_dir)
-    server = HTTPServer((HTTP_HOST, HTTP_PORT), QuietHTTPHandler)
-    print(f"📺 HTTP服务器: http://localhost:{HTTP_PORT}")
-    server.serve_forever()
+    print(f"📁 工作目录: {os.getcwd()}")
+    
+    try:
+        server = HTTPServer((HTTP_HOST, HTTP_PORT), QuietHTTPHandler)
+        print(f"📺 HTTP服务器: http://localhost:{HTTP_PORT}")
+        print(f"🌐 浏览器访问: http://localhost:{HTTP_PORT}/")
+        server.serve_forever()
+    finally:
+        os.chdir(original_cwd)
 
 
 # ============== OBS 捕获 ==============
