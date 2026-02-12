@@ -18,6 +18,7 @@ import os
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from typing import Optional
+import websockets
 from obswebsocket import obsws, requests
 
 # ============== 配置 ==============
@@ -103,16 +104,28 @@ class OBSCapture:
             print("\n📋 可用来源:")
             result = self.ws.call(requests.GetSourcesList())
             
-            # v5 API 返回的数据结构
-            sources = result.__dict__ if hasattr(result, '__dict__') else []
+            # 解析返回结果
+            sources = []
             if hasattr(result, 'sources'):
                 sources = result.sources
+            elif hasattr(result, '__dict__'):
+                for key, value in result.__dict__.items():
+                    if isinstance(value, list):
+                        sources.extend(value)
             
-            for i, source in enumerate(sources[:30]):
-                name = source.get('name', 'Unknown') if isinstance(source, dict) else str(source)
+            # 去重
+            seen = set()
+            unique_sources = []
+            for s in sources:
+                name = s.get('name', str(s)) if isinstance(s, dict) else str(s)
+                if name not in seen:
+                    seen.add(name)
+                    unique_sources.append(name)
+            
+            for i, name in enumerate(unique_sources[:30]):
                 print(f"  {i+1}. {name}")
             print()
-            return sources
+            return unique_sources
         except Exception as e:
             print(f"❌ 获取来源列表失败: {e}")
             return []
