@@ -1,14 +1,5 @@
 """
 OBS WebSocket Client - 接收OBS画面流并转发到Web浏览器
-
-依赖:
-    pip install obs-websocket-py websocket-client numpy opencv-python
-
-OBS配置:
-    1. 安装 OBS Studio
-    2. 安装 obs-websocket 插件 (v5.x版本)
-    3. 工具 → WebSocket → 确认服务器端口 (默认4455)
-    4. 配置来源为"窗口捕获"或"显示器捕获"
 """
 
 import asyncio
@@ -23,15 +14,27 @@ from obswebsocket import obsws, requests
 
 # ============== 配置 ==============
 OBS_HOST = "localhost"
-OBS_PORT = 4455  # v5 API 默认端口
+OBS_PORT = 4455
 OBS_PASSWORD = ""
 
 HTTP_HOST = "0.0.0.0"
 HTTP_PORT = 8080
 WEBSOCKET_PORT = 8765
 
-# 来源名称 - 根据你的OBS设置修改
-SOURCE_NAME = ""  # 空表示获取当前活动输出
+# 尝试的来源名称列表
+SOURCE_NAMES = [
+    "",              # 空=当前活动来源
+    "场景",          # Scene
+    "Scene", 
+    "显示器捕获",    # Display Capture
+    "Display Capture",
+    "窗口捕获",      # Window Capture
+    "Window Capture",
+    "游戏捕获",      # Game Capture
+    "Game Capture",
+    "浏览器",        # Browser
+    "Browser",
+]
 
 # ============== HTTP 服务器 ==============
 class QuietHTTPHandler(SimpleHTTPRequestHandler):
@@ -53,10 +56,8 @@ def start_http_server():
     server_python_dir = os.path.dirname(os.path.abspath(__file__))
     web_dir = os.path.join(os.path.dirname(os.path.dirname(server_python_dir)), 'web')
     
-    print(f"📁 Web目录: {web_dir}")
-    
     if not os.path.exists(web_dir):
-        print(f"❌ Web目录不存在")
+        print(f"❌ Web目录不存在: {web_dir}")
         return
     
     original_cwd = os.getcwd()
@@ -77,7 +78,8 @@ class OBSCapture:
         self.running = False
         self.ws = None
         self.obs_connected = False
-        
+        self.working_source = None
+    
     def connect(self) -> bool:
         try:
             print(f"🔌 连接OBS: ws://{OBS_HOST}:{OBS_PORT}...")
@@ -86,49 +88,16 @@ class OBSCapture:
             self.obs_connected = True
             print(f"✅ 已连接OBS")
             
-            # 获取版本信息
             try:
                 version = self.ws.call(requests.GetVersion())
                 print(f"  OBS版本: {version.getObsVersion()}")
             except:
-                print(f"  (无法获取版本)")
+                pass
             
             return True
         except Exception as e:
             print(f"❌ 连接OBS失败: {e}")
             return False
-    
-    def list_sources(self):
-        """列出所有来源"""
-        try:
-            print("\n📋 可用来源:")
-            result = self.ws.call(requests.GetSourcesList())
-            
-            # 解析返回结果
-            sources = []
-            if hasattr(result, 'sources'):
-                sources = result.sources
-            elif hasattr(result, '__dict__'):
-                for key, value in result.__dict__.items():
-                    if isinstance(value, list):
-                        sources.extend(value)
-            
-            # 去重
-            seen = set()
-            unique_sources = []
-            for s in sources:
-                name = s.get('name', str(s)) if isinstance(s, dict) else str(s)
-                if name not in seen:
-                    seen.add(name)
-                    unique_sources.append(name)
-            
-            for i, name in enumerate(unique_sources[:30]):
-                print(f"  {i+1}. {name}")
-            print()
-            return unique_sources
-        except Exception as e:
-            print(f"❌ 获取来源列表失败: {e}")
-            return []
     
     def get_screenshot(self, source_name: str = "") -> Optional[bytes]:
         """获取截图"""
@@ -147,18 +116,33 @@ class OBSCapture:
             
             result = self.ws.call(requests.GetSourceScreenshot(**kwargs))
             
-            # v5 API: imageData 在响应中
-            if hasattr(result, 'imageData') and result.imageData:
-                return base64.b64decode(result.imageData)
-            
-            # 尝试其他属性名
-            if hasattr(result, 'image_data'):
-                return base64.b64decode(result.image_data)
+            # 尝试不同属性名
+            for attr in ['imageData', 'image_data', 'data']:
+                if hasattr(result, attr):
+                    data = getattr(result, attr)
+                    if data:
+                        return base64.b64decode(data)
             
             return None
             
         except Exception as e:
             return None
+    
+    def find_working_source(self) -> Optional[str]:
+        """查找可用的来源"""
+        print("\n🔍 查找可用来源...")
+        
+        for name in SOURCE_NAMES:
+            print(f"  尝试: '{name}'...", end=" ")
+            frame = self.get_screenshot(name)
+            if frame and len(frame) > 100:  # 确保不是空图片
+                print(f"✅ 成功! ({len(frame)} bytes)")
+                return name
+            else:
+                print("❌")
+        
+        print("❌ 未找到可用的来源")
+        return None
     
     async def broadcast(self, data: bytes):
         if self.clients:
@@ -170,7 +154,7 @@ class OBSCapture:
     
     async def handler(self, websocket):
         self.clients.add(websocket)
-        print(f"🌐 客户端连接: {websocket.remote_address}")
+        print(f"🌐 客户端: {websocket.remote_address}")
         try:
             async for message in websocket:
                 if isinstance(message, str):
@@ -185,39 +169,49 @@ class OBSCapture:
     
     async def start_websocket_server(self):
         self.running = True
+        print(f"🚀 WebSocket: ws://{HTTP_HOST}:{WEBSOCKET_PORT}")
         async with websockets.serve(self.handler, HTTP_HOST, WEBSOCKET_PORT):
-            print(f"🚀 WebSocket服务器: ws://{HTTP_HOST}:{WEBSOCKET_PORT}")
             await asyncio.Future()
     
     async def stream_loop(self, interval: float = 0.1):
-        """主循环"""
         import time
         
-        # 首先列出来源
+        # 查找可用来源
         if self.obs_connected:
-            sources = self.list_sources()
-            if SOURCE_NAME:
-                print(f"📷 使用指定来源: {SOURCE_NAME}")
+            self.working_source = self.find_working_source()
         
-        # 尝试获取截图
-        test_count = 0
-        success_count = 0
+        tested = set()
+        fps_count = 0
+        last_time = time.time()
         
         while self.running:
             try:
-                frame = self.get_screenshot(SOURCE_NAME)
-                
-                if frame:
-                    success_count += 1
-                    if self.clients:
-                        await self.broadcast(frame)
-                else:
-                    test_count += 1
-                    if test_count <= 3:
-                        print(f"⚠️ 无法获取截图 (尝试 {test_count}/3)")
-                        if test_count == 1:
-                            print("💡 提示: 在OBS中添加一个'显示器捕获'来源")
+                if self.working_source:
+                    frame = self.get_screenshot(self.working_source)
                     
+                    if frame and self.clients:
+                        await self.broadcast(frame)
+                        fps_count += 1
+                        
+                        # 每秒打印FPS
+                        now = time.time()
+                        if now - last_time >= 1.0:
+                            print(f"📊 FPS: {fps_count}")
+                            fps_count = 0
+                            last_time = now
+                else:
+                    # 尝试重新检测
+                    if len(tested) < len(SOURCE_NAMES):
+                        for name in SOURCE_NAMES:
+                            if name not in tested:
+                                tested.add(name)
+                                if self.get_screenshot(name):
+                                    self.working_source = name
+                                    print(f"✅ 找到来源: '{name}'")
+                                    break
+                    
+                    await asyncio.sleep(1)
+                
                 await asyncio.sleep(interval)
                 
             except Exception as e:
