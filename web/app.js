@@ -1,5 +1,5 @@
 /**
- * CS2 Radar Stream - Web 客户端
+ * Screen Region Stream - Web 客户端
  */
 
 // 配置

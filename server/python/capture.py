@@ -1,5 +1,5 @@
 """
-CS2 Radar Capture - Windows 屏幕捕获与WebSocket传输
+Screen Region Capture - Windows 屏幕区域捕获与WebSocket传输
 """
 import asyncio
 import json
