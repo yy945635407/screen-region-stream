@@ -26,6 +26,7 @@ SOURCE_NAMES = [
     "",              # 空=当前活动来源
     "场景",          # Scene
     "Scene", 
+    "屏幕捕获",      # 用户实际使用的名称
     "显示器捕获",    # Display Capture
     "Display Capture",
     "窗口捕获",      # Window Capture
