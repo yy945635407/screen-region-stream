@@ -52,8 +52,9 @@ class QuietHTTPHandler(SimpleHTTPRequestHandler):
 
 def start_http_server():
     """启动HTTP服务器"""
-    # 项目根目录 = obs_client.py 所在目录的父级
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # obs_client.py 在 server/python/，项目根目录在上一级的上一级
+    server_python_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(server_python_dir))  # server/python/../../
     web_dir = os.path.join(project_root, 'web')
     
     print(f"📁 项目目录: {project_root}")
