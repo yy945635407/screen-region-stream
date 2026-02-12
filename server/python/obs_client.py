@@ -18,6 +18,7 @@ import os
 import threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from typing import Optional
+import websockets
 from obswebsocket import obsws, requests
 
 # ============== 配置 ==============
