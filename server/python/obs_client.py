@@ -52,8 +52,18 @@ class QuietHTTPHandler(SimpleHTTPRequestHandler):
 
 def start_http_server():
     """启动HTTP服务器"""
-    # 切换到项目根目录
-    os.chdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    # 项目根目录 = obs_client.py 所在目录的父级
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    web_dir = os.path.join(project_root, 'web')
+    
+    print(f"📁 项目目录: {project_root}")
+    print(f"📁 Web目录: {web_dir}")
+    
+    if not os.path.exists(web_dir):
+        print(f"❌ Web目录不存在: {web_dir}")
+        return
+        
+    os.chdir(web_dir)
     server = HTTPServer((HTTP_HOST, HTTP_PORT), QuietHTTPHandler)
     print(f"📺 HTTP服务器: http://localhost:{HTTP_PORT}")
     server.serve_forever()
