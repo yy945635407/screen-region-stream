@@ -2,8 +2,9 @@
  * Screen Region Stream - Web 客户端
  */
 
-// 配置
-const SERVER_URL = `ws://${window.location.hostname || 'localhost'}:8765`;
+// 配置 - 自动检测服务器地址
+const WS_PORT = 8765;
+const SERVER_URL = `ws://${window.location.hostname || 'localhost'}:${WS_PORT}`;
 
 // 状态
 let ws = null;
@@ -26,14 +27,9 @@ let calibrationPoints = [];
 
 // 初始化
 function init() {
+    // 显示服务器地址
     serverUrlEl.textContent = SERVER_URL;
-    showStatus('disconnected', '未连接');
-    
-    // 监听服务器地址变化
-    const urlInput = prompt('输入服务器地址:', SERVER_URL);
-    if (urlInput) {
-        serverUrlEl.textContent = urlInput;
-    }
+    showStatus('connecting', '连接中...');
     
     // 自动连接
     connect();
@@ -41,13 +37,7 @@ function init() {
 
 // 连接服务器
 function connect() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        console.log('已连接');
-        return;
-    }
-    
-    showStatus('connecting', '连接中...');
-    console.log(`连接到 ${SERVER_URL}...`);
+    console.log(`连接 ${SERVER_URL}...`);
     
     ws = new WebSocket(SERVER_URL);
     
@@ -63,11 +53,13 @@ function connect() {
         console.log('✗ 连接断开');
         
         // 3秒后重连
-        setTimeout(() => {
-            if (!connected) {
-                connect();
-            }
-        }, 3000);
+        if (ws) {
+            setTimeout(() => {
+                if (!connected && ws.readyState !== WebSocket.CONNECTING) {
+                    connect();
+                }
+            }, 3000);
+        }
     };
     
     ws.onerror = (error) => {
@@ -85,8 +77,6 @@ function connect() {
             img.onload = () => {
                 ctx.drawImage(img, 0, 0);
                 URL.revokeObjectURL(url);
-                
-                // 更新FPS
                 updateFps();
             };
             img.src = url;
@@ -114,7 +104,6 @@ function disconnect() {
 // 处理消息
 function handleMessage(msg) {
     if (msg.type === 'config') {
-        // 服务器配置更新
         console.log('配置:', msg.data);
     } else if (msg.type === 'latency') {
         latencyEl.textContent = msg.latency.toFixed(0);
@@ -169,7 +158,6 @@ function finishCalibration() {
     calibrationMode = false;
     canvas.onclick = null;
     
-    // 计算区域
     const xs = calibrationPoints.map(p => p.x);
     const ys = calibrationPoints.map(p => p.y);
     
@@ -182,7 +170,6 @@ function finishCalibration() {
         }
     };
     
-    // 发送配置到服务器
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(config));
     }
