@@ -1,8 +1,8 @@
 /**
- * Screen Region Stream - Web 客户端
+ * Screen Region Stream - Web 客户端 (Debug版)
  */
 
-// 配置 - 自动检测服务器地址
+// 配置
 const WS_PORT = 8765;
 const SERVER_URL = `ws://${window.location.hostname || 'localhost'}:${WS_PORT}`;
 
@@ -25,76 +25,110 @@ const serverUrlEl = document.getElementById('serverUrl');
 let calibrationMode = false;
 let calibrationPoints = [];
 
-// 初始化
+// DEBUG: 初始化
 function init() {
+    console.log('[DEBUG] init() 开始执行');
+    console.log('[DEBUG] SERVER_URL =', SERVER_URL);
+    
     // 显示服务器地址
     serverUrlEl.textContent = SERVER_URL;
     showStatus('connecting', '连接中...');
     
-    // 自动连接
+    console.log('[DEBUG] 准备调用 connect()');
     connect();
+    
+    // 3秒后检查连接状态
+    setTimeout(() => {
+        console.log('[DEBUG] 3秒后检查连接状态');
+        console.log('[DEBUG] ws =', ws);
+        console.log('[DEBUG] ws.readyState =', ws ? ws.readyState : 'ws is null');
+        if (ws) {
+            console.log('[DEBUG] WebSocket状态:', 
+                ws.readyState === 0 ? 'CONNECTING' :
+                ws.readyState === 1 ? 'OPEN' :
+                ws.readyState === 2 ? 'CLOSING' : 'CLOSED');
+        }
+        if (!connected) {
+            showStatus('disconnected', '连接失败 - 请检查控制台');
+        }
+    }, 3000);
 }
 
 // 连接服务器
 function connect() {
-    console.log(`连接 ${SERVER_URL}...`);
+    console.log('[DEBUG] connect() 开始');
     
-    ws = new WebSocket(SERVER_URL);
-    
-    ws.onopen = () => {
-        connected = true;
-        showStatus('connected', '已连接');
-        console.log('✓ 连接成功');
-    };
-    
-    ws.onclose = () => {
-        connected = false;
-        showStatus('disconnected', '已断开');
-        console.log('✗ 连接断开');
+    try {
+        console.log('[DEBUG] 创建WebSocket连接...');
+        ws = new WebSocket(SERVER_URL);
+        console.log('[DEBUG] WebSocket对象已创建');
         
-        // 3秒后重连
-        if (ws) {
+        ws.onopen = () => {
+            connected = true;
+            showStatus('connected', '已连接');
+            console.log('[DEBUG] ✓ onopen 触发 - 连接成功');
+        };
+        
+        ws.onclose = (event) => {
+            connected = false;
+            showStatus('disconnected', '已断开');
+            console.log('[DEBUG] ✗ onclose 触发');
+            console.log('[DEBUG] close event:', event);
+            
+            // 3秒后重连
             setTimeout(() => {
-                if (!connected && ws.readyState !== WebSocket.CONNECTING) {
+                if (!connected) {
+                    console.log('[DEBUG] 自动重连...');
                     connect();
                 }
             }, 3000);
-        }
-    };
-    
-    ws.onerror = (error) => {
-        console.error('WebSocket错误:', error);
-        showStatus('disconnected', '连接错误');
-    };
-    
-    ws.onmessage = (event) => {
-        if (event.data instanceof Blob) {
-            // 接收JPEG图像
-            const blob = event.data;
-            const url = URL.createObjectURL(blob);
+        };
+        
+        ws.onerror = (error) => {
+            console.error('[DEBUG] ✗ onerror 触发');
+            console.error('[DEBUG] WebSocket错误:', error);
+            showStatus('disconnected', '连接错误 - 请检查控制台');
+        };
+        
+        ws.onmessage = (event) => {
+            console.log('[DEBUG] onmessage 收到数据');
             
-            const img = new Image();
-            img.onload = () => {
-                ctx.drawImage(img, 0, 0);
-                URL.revokeObjectURL(url);
-                updateFps();
-            };
-            img.src = url;
-        } else if (typeof event.data === 'string') {
-            // 接收文本消息
-            try {
-                const msg = JSON.parse(event.data);
-                handleMessage(msg);
-            } catch (e) {
-                console.log('消息:', event.data);
+            if (event.data instanceof Blob) {
+                console.log('[DEBUG] 收到Blob数据，大小:', event.data.size);
+                const blob = event.data;
+                const url = URL.createObjectURL(blob);
+                
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0);
+                    URL.revokeObjectURL(url);
+                    updateFps();
+                    console.log('[DEBUG] 图像绘制完成');
+                };
+                img.onerror = () => {
+                    console.error('[DEBUG] 图像加载失败');
+                };
+                img.src = url;
+            } else if (typeof event.data === 'string') {
+                console.log('[DEBUG] 收到文本:', event.data);
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleMessage(msg);
+                } catch (e) {
+                    console.log('[DEBUG] JSON解析失败:', e);
+                }
             }
-        }
-    };
+        };
+        
+    } catch (e) {
+        console.error('[DEBUG] 创建WebSocket异常:', e);
+    }
 }
 
 // 断开连接
 function disconnect() {
     if (ws) {
+        console.log('[DEBUG] 手动断开连接');
         ws.close();
         ws = null;
     }
@@ -103,6 +137,7 @@ function disconnect() {
 
 // 处理消息
 function handleMessage(msg) {
+    console.log('[DEBUG] handleMessage:', msg);
     if (msg.type === 'config') {
         console.log('配置:', msg.data);
     } else if (msg.type === 'latency') {
@@ -121,23 +156,28 @@ function updateFps() {
         fpsEl.textContent = currentFps;
         frameCount = 0;
         lastFpsTime = now;
+        console.log('[DEBUG] FPS:', currentFps);
     }
 }
 
 // 校准模式
 function startCalibration() {
+    console.log('[DEBUG] startCalibration 点击');
     calibrationMode = !calibrationMode;
     
     if (calibrationMode) {
         calibrationPoints = [];
-        alert('校准模式：点击雷达区域的四个角（左上、右上、右下、左下）');
+        alert('校准模式：点击雷达区域的四个角');
+        console.log('[DEBUG] 进入校准模式');
         
         canvas.onclick = (e) => {
+            console.log('[DEBUG] canvas.onclick');
             const rect = canvas.getBoundingClientRect();
             const x = (e.clientX - rect.left) * (canvas.width / rect.width);
             const y = (e.clientY - rect.top) * (canvas.height / rect.height);
             
             calibrationPoints.push({ x, y });
+            console.log('[DEBUG] 点击点:', calibrationPoints);
             
             // 绘制点击点
             ctx.fillStyle = calibrationPoints.length % 2 === 1 ? '#00ff00' : '#ff0000';
@@ -170,6 +210,8 @@ function finishCalibration() {
         }
     };
     
+    console.log('[DEBUG] 发送校准配置:', config);
+    
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(config));
     }
@@ -181,6 +223,7 @@ function finishCalibration() {
 function showStatus(type, text) {
     statusEl.className = 'status ' + type;
     statusEl.textContent = text;
+    console.log('[DEBUG] 状态更新:', type, text);
 }
 
 // 页面加载完成后初始化
