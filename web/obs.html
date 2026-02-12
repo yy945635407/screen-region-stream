@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screen Region Stream - OBS View</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        #container {
+            text-align: center;
+        }
+        #radarCanvas {
+            max-width: 100%;
+            border-radius: 8px;
+            background: #0f0f1a;
+        }
+        #status {
+            color: #666;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="radarCanvas" width="320" height="240"></canvas>
+        <div id="status">等待连接...</div>
+    </div>
+    <script>
+        const canvas = document.getElementById('radarCanvas');
+        const ctx = canvas.getContext('2d');
+        const status = document.getElementById('status');
+        let ws = null;
+        let reconnectTimer = null;
+
+        function connect() {
+            status.textContent = '连接中...';
+            
+            // 连接到Python服务器
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}:8765`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                status.textContent = '已连接';
+                status.style.color = '#00c853';
+                console.log('✓ 连接成功');
+            };
+            
+            ws.onclose = () => {
+                status.textContent = '已断开 - 3秒后重连';
+                status.style.color = '#ff5252';
+                reconnectTimer = setTimeout(connect, 3000);
+            };
+            
+            ws.onerror = (error) => {
+                status.textContent = '连接错误 - 重试中...';
+                status.style.color = '#ffab00';
+            };
+            
+            ws.onmessage = (event) => {
+                if (event.data instanceof Blob) {
+                    const url = URL.createObjectURL(event.data);
+                    const img = new Image();
+                    img.onload = () => {
+                        ctx.drawImage(img, 0, 0);
+                        URL.revokeObjectURL(url);
+                    };
+                    img.src = url;
+                }
+            };
+        }
+
+        // 启动连接
+        connect();
+
+        // 接收来自父窗口的消息（如果在iframe中）
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'image') {
+                const blob = new Blob([event.data.data], {type: 'image/jpeg'});
+                const url = URL.createObjectURL(blob);
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0);
+                    URL.revokeObjectURL(url);
+                };
+                img.src = url;
+            }
+        });
+    </script>
+</body>
+</html>
