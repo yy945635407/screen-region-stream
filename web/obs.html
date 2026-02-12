@@ -32,12 +32,14 @@
             margin-top: 10px;
             font-size: 14px;
         }
+        .connected { color: #00c853 !important; }
+        .disconnected { color: #ff5252 !important; }
     </style>
 </head>
 <body>
     <div id="container">
         <canvas id="radarCanvas" width="320" height="240"></canvas>
-        <div id="status">等待连接...</div>
+        <div id="status" class="disconnected">等待连接...</div>
     </div>
     <script>
         const canvas = document.getElementById('radarCanvas');
@@ -45,62 +47,83 @@
         const status = document.getElementById('status');
         let ws = null;
         let reconnectTimer = null;
+        let requestTimer = null;
 
         function connect() {
             status.textContent = '连接中...';
+            status.className = 'disconnected';
             
-            // 连接到Python服务器
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}:8765`;
             
+            console.log('连接:', wsUrl);
             ws = new WebSocket(wsUrl);
             
             ws.onopen = () => {
-                status.textContent = '已连接';
-                status.style.color = '#00c853';
-                console.log('✓ 连接成功');
+                status.textContent = '已连接 - 请求截图...';
+                status.className = 'connected';
+                console.log('✓ WebSocket连接成功');
+                
+                // 开始请求截图
+                startRequesting();
             };
             
             ws.onclose = () => {
                 status.textContent = '已断开 - 3秒后重连';
-                status.style.color = '#ff5252';
+                status.className = 'disconnected';
+                stopRequesting();
                 reconnectTimer = setTimeout(connect, 3000);
             };
             
             ws.onerror = (error) => {
+                console.error('WebSocket错误:', error);
                 status.textContent = '连接错误 - 重试中...';
-                status.style.color = '#ffab00';
             };
             
             ws.onmessage = (event) => {
-                if (event.data instanceof Blob) {
-                    const url = URL.createObjectURL(event.data);
-                    const img = new Image();
-                    img.onload = () => {
-                        ctx.drawImage(img, 0, 0);
-                        URL.revokeObjectURL(url);
-                    };
-                    img.src = url;
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'screenshot' && data.data) {
+                        // 显示截图
+                        const img = new Image();
+                        img.onload = () => {
+                            ctx.drawImage(img, 0, 0);
+                        };
+                        img.src = 'data:image/jpeg;base64,' + data.data;
+                        status.textContent = '画面传输中...';
+                    }
+                    
+                    else if (data.type === 'pong') {
+                        // 心跳响应
+                    }
+                    
+                } catch (e) {
+                    console.error('解析错误:', e);
                 }
             };
         }
 
+        function startRequesting() {
+            if (requestTimer) clearInterval(requestTimer);
+            
+            // 每100ms请求一次截图
+            requestTimer = setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'request_screenshot' }));
+                }
+            }, 100);
+        }
+
+        function stopRequesting() {
+            if (requestTimer) {
+                clearInterval(requestTimer);
+                requestTimer = null;
+            }
+        }
+
         // 启动连接
         connect();
-
-        // 接收来自父窗口的消息（如果在iframe中）
-        window.addEventListener('message', (event) => {
-            if (event.data.type === 'image') {
-                const blob = new Blob([event.data.data], {type: 'image/jpeg'});
-                const url = URL.createObjectURL(blob);
-                const img = new Image();
-                img.onload = () => {
-                    ctx.drawImage(img, 0, 0);
-                    URL.revokeObjectURL(url);
-                };
-                img.src = url;
-            }
-        });
     </script>
 </body>
 </html>

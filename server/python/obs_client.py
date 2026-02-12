@@ -1,10 +1,11 @@
 """
-OBS WebSocket Client - 获取截图并通过WebSocket发送
+OBS投屏服务器 - 通过浏览器中转
 
-使用方法：
-1. OBS中添加"浏览器"来源
-2. URL填写: http://localhost:8080/obs.html
-3. 这样OBS会加载我们的页面，然后通过PostMessage接收画面
+工作原理：
+1. Python服务器启动HTTP + WebSocket
+2. OBS添加"浏览器"来源，URL=http://localhost:8080/obs.html
+3. 页面连接WebSocket接收截图并显示
+4. Python通过WebSocket发送截图到页面
 """
 
 import asyncio
@@ -39,13 +40,13 @@ class QuietHTTPHandler(SimpleHTTPRequestHandler):
 
 
 # ============== 主程序 ==============
-class OBSCaptureServer:
+class OBSStreamServer:
     def __init__(self):
-        self.clients = set()
+        self.clients = set()  # Web浏览器客户端
         self.running = False
         self.ws = None
         self.obs_connected = False
-        self.connected_clients = 0
+        self.screenshot_interval = 0.1  # 10 FPS
     
     def start_http_server(self):
         """启动HTTP服务器"""
@@ -62,7 +63,13 @@ class OBSCaptureServer:
         try:
             server = HTTPServer((HTTP_HOST, HTTP_PORT), QuietHTTPHandler)
             print(f"📺 HTTP服务器: http://localhost:{HTTP_PORT}")
-            print(f"🌐 OBS浏览器来源URL: http://localhost:{HTTP_PORT}/obs.html")
+            print(f"\n{'='*50}")
+            print("📋 OBS配置步骤:")
+            print(f"   1. OBS中添加 '浏览器' 来源")
+            print(f"   2. URL填写: http://localhost:{HTTP_PORT}/obs.html")
+            print(f"   3. 宽度: 320, 高度: 240")
+            print(f"   4. 勾选 '使输出可见' → '虚拟摄像机'")
+            print(f"{'='*50}\n")
             server.serve_forever()
         finally:
             os.chdir(original_cwd)
@@ -80,58 +87,67 @@ class OBSCaptureServer:
             print(f"❌ 连接OBS失败: {e}")
             return False
     
-    async def handle_client(self, websocket):
-        """处理Web客户端连接"""
-        self.connected_clients += 1
-        print(f"🌐 客户端 #{self.connected_clients}: {websocket.remote_address}")
-        
-        try:
-            async for message in websocket:
-                # 接收来自浏览器的截图请求
-                if isinstance(message, str):
-                    try:
-                        data = json.loads(message)
-                        if data.get('type') == 'capture_request':
-                            # 从OBS获取截图
-                            frame = self.capture_from_obs()
-                            if frame:
-                                await websocket.send(frame)
-                    except:
-                        pass
-        finally:
-            self.connected_clients -= 1
-    
-    def capture_from_obs(self) -> Optional[bytes]:
+    def capture_screenshot(self) -> Optional[bytes]:
         """从OBS获取截图"""
         if not self.obs_connected:
             return None
         
-        sources = ["屏幕捕获", "显示器捕获", "窗口捕获", "场景", ""]
+        # 尝试多个可能的来源
+        sources = ["屏幕捕获", "显示器捕获", "窗口捕获", "场景"]
         
         for source in sources:
             try:
-                kwargs = {
-                    'imageFormat': "jpeg",
-                    'imageWidth': 320,
-                    'imageHeight': 240
-                }
-                if source:
-                    kwargs['sourceName'] = source
+                result = self.ws.call(requests.GetSourceScreenshot(
+                    sourceName=source,
+                    imageFormat="jpeg",
+                    imageWidth=320,
+                    imageHeight=240
+                ))
                 
-                result = self.ws.call(requests.GetSourceScreenshot(**kwargs))
-                
-                # 尝试不同属性
-                for attr in ['imageData', 'image_data']:
-                    if hasattr(result, attr):
-                        data = getattr(result, attr)
-                        if data:
-                            decoded = base64.b64decode(data)
-                            if len(decoded) > 100:
-                                return decoded
-            except:
+                # 检查返回数据
+                if hasattr(result, 'imageData') and result.imageData:
+                    data = base64.b64decode(result.imageData)
+                    if len(data) > 100:
+                        return data
+                        
+            except Exception as e:
                 continue
         
         return None
+    
+    async def handle_client(self, websocket):
+        """处理浏览器客户端"""
+        self.clients.add(websocket)
+        client_id = len(self.clients)
+        print(f"🌐 客户端 #{client_id}: {websocket.remote_address}")
+        
+        try:
+            async for message in websocket:
+                # 接收来自页面的消息
+                if isinstance(message, str):
+                    try:
+                        data = json.loads(message)
+                        
+                        if data.get('type') == 'request_screenshot':
+                            # 页面请求截图
+                            frame = self.capture_screenshot()
+                            if frame:
+                                # 发送base64编码的图片
+                                await websocket.send(json.dumps({
+                                    'type': 'screenshot',
+                                    'data': base64.b64encode(frame).decode()
+                                }))
+                        
+                        elif data.get('type') == 'pong':
+                            # 心跳响应
+                            pass
+                    
+                    except json.JSONDecodeError:
+                        pass
+                    
+        finally:
+            self.clients.discard(websocket)
+            print(f"   客户端 #{client_id} 断开")
     
     async def start_websocket_server(self):
         """启动WebSocket服务器"""
@@ -141,20 +157,27 @@ class OBSCaptureServer:
             await asyncio.Future()
     
     async def stream_loop(self):
-        """主循环 - 定期发送截图"""
+        """主循环 - 定时推送截图"""
         import time
-        fps = 0
-        last_time = time.time()
         
         while self.running:
             try:
-                # 定期打印状态
-                now = time.time()
-                if now - last_time >= 5:
-                    print(f"📊 状态: {self.connected_clients} 客户端连接")
-                    last_time = now
+                if self.clients:
+                    frame = self.capture_screenshot()
+                    if frame:
+                        # 广播到所有客户端
+                        msg = json.dumps({
+                            'type': 'screenshot',
+                            'data': base64.b64encode(frame).decode()
+                        })
+                        
+                        await asyncio.gather(
+                            *[client.send(msg) for client in self.clients.copy()],
+                            return_exceptions=True
+                        )
+                        self.clients = {c for c in self.clients if c.open}
                 
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(self.screenshot_interval)
                 
             except Exception as e:
                 print(f"Error: {e}")
@@ -171,13 +194,13 @@ async def main():
     print("🎮 Screen Region Stream - OBS投屏方案")
     print("=" * 50)
     
-    server = OBSCaptureServer()
+    server = OBSStreamServer()
     
     # 连接OBS
     if not server.connect_obs():
         return
     
-    # 启动HTTP服务器
+    # 启动HTTP服务器（后台）
     http_thread = threading.Thread(target=server.start_http_server, daemon=True)
     http_thread.start()
     
