@@ -119,33 +119,45 @@ class OBSCapture:
             return None
         
         try:
-            # 获取截图
-            result = self.ws.call(requests.GetSourceScreenshot(
-                sourceName="场景",
-                imageFormat="jpeg",
-                imageWidth=320,
-                imageHeight=240
-            ))
+            # 尝试获取截图（使用虚拟摄像机作为来源）
+            sources_to_try = [
+                "虚拟摄像机",  # Virtual Camera
+                "obs虚拟摄像机",
+                "Virtual Camera",
+                "场景",  # Scene
+                ""  # 当前活动来源
+            ]
             
-            if result and hasattr(result, 'imageData'):
-                return base64.b64decode(result.imageData)
-                
+            for source_name in sources_to_try:
+                try:
+                    if source_name:
+                        result = self.ws.call(requests.GetSourceScreenshot(
+                            sourceName=source_name,
+                            imageFormat="jpeg",
+                            imageWidth=320,
+                            imageHeight=240
+                        ))
+                    else:
+                        result = self.ws.call(requests.GetSourceScreenshot(
+                            imageFormat="jpeg",
+                            imageWidth=320,
+                            imageHeight=240
+                        ))
+                    
+                    if result and hasattr(result, 'imageData') and result.imageData:
+                        img_data = base64.b64decode(result.imageData)
+                        print(f"✅ 获取到截图来源: {source_name or '(默认)'}, 大小: {len(img_data)} bytes")
+                        return img_data
+                        
+                except Exception as e:
+                    continue
+            
+            print("❌ 所有来源都无法获取截图")
+            return None
+            
         except Exception as e:
-            if "not connected" in str(e).lower():
-                self.obs_connected = False
-            try:
-                # 尝试不使用来源名称
-                result = self.ws.call(requests.GetSourceScreenshot(
-                    imageFormat="jpeg",
-                    imageWidth=320,
-                    imageHeight=240
-                ))
-                if result and hasattr(result, 'imageData'):
-                    return base64.b64decode(result.imageData)
-            except:
-                pass
-        
-        return None
+            print(f"❌ 截图异常: {e}")
+            return None
     
     async def broadcast(self, data: bytes):
         """广播"""
@@ -218,6 +230,17 @@ async def main():
     # 连接OBS
     if not capture.connect():
         return
+    
+    # 调试：列出所有来源
+    try:
+        print("\n📋 可用来源列表:")
+        sources = capture.ws.call(requests.GetSourcesList())
+        if sources and hasattr(sources, 'sources'):
+            for i, source in enumerate(sources.sources[:20]):  # 只显示前20个
+                print(f"  {i+1}. {source.get('name', 'Unknown')}")
+        print()
+    except Exception as e:
+        print(f"获取来源列表失败: {e}")
     
     # 启动HTTP服务器（后台线程）
     http_thread = threading.Thread(target=start_http_server, daemon=True)
