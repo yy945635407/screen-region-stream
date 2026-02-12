@@ -62,7 +62,7 @@ class OBSCapture:
             
             # 测试连接
             version = self.ws.call(requests.GetVersion())
-            print(f"  OBS版本: {version.getObsStudioVersion()}")
+            print(f"  OBS版本: {version.getObsVersion()}")
             
             return True
         except Exception as e:
