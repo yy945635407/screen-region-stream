@@ -3,70 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Screen Region Stream</title>
+    <title>CS2 Radar Stream</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #1a1a2e;
-            color: #eee;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
             padding: 20px;
         }
-        
         h1 {
             margin-bottom: 20px;
             color: #00d4ff;
         }
-        
         .container {
             width: 100%;
-            max-width: 600px;
+            max-width: 400px;
         }
-        
-        .status {
+        #status {
             text-align: center;
             padding: 10px;
-            margin-bottom: 20px;
             border-radius: 8px;
+            margin-bottom: 20px;
             font-weight: bold;
         }
+        .connected { background: #00c853; }
+        .disconnected { background: #ff5252; }
+        .connecting { background: #ffab00; }
         
-        .status.connected {
-            background: #00c853;
-        }
-        
-        .status.disconnected {
-            background: #ff5252;
-        }
-        
-        .status.connecting {
-            background: #ffab00;
-        }
-        
-        .radar-container {
+        #canvasContainer {
             background: #0f0f1a;
             border-radius: 12px;
             padding: 10px;
             display: flex;
             justify-content: center;
-            align-items: center;
-            min-height: 300px;
         }
-        
         #radarCanvas {
             max-width: 100%;
             border-radius: 8px;
         }
-        
         .info {
             margin-top: 20px;
             padding: 15px;
@@ -74,74 +57,122 @@
             border-radius: 8px;
             font-size: 14px;
         }
-        
         .info p {
             margin: 5px 0;
         }
-        
         .info span {
             color: #00d4ff;
         }
-        
         .controls {
             margin-top: 20px;
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
         }
-        
         button {
             padding: 10px 20px;
             border: none;
             border-radius: 6px;
             cursor: pointer;
             font-size: 14px;
-            transition: opacity 0.2s;
         }
-        
-        button:hover {
-            opacity: 0.8;
-        }
-        
-        .btn-connect {
-            background: #00d4ff;
-            color: #1a1a2e;
-        }
-        
-        .btn-disconnect {
-            background: #ff5252;
-            color: white;
-        }
-        
-        .btn-calibrate {
-            background: #7c4dff;
-            color: white;
-        }
+        .btn-connect { background: #00d4ff; color: #1a1a2e; }
+        .btn-disconnect { background: #ff5252; color: white; }
     </style>
 </head>
 <body>
-    <h1>🖥️ Screen Region Stream</h1>
-    
+    <h1>🎯 Radar Stream</h1>
     <div class="container">
-        <div id="status" class="status disconnected">未连接</div>
+        <div id="status" class="disconnected">未连接</div>
         
-        <div class="radar-container">
-            <canvas id="radarCanvas" width="200" height="200"></canvas>
+        <div id="canvasContainer">
+            <canvas id="radarCanvas" width="320" height="240"></canvas>
         </div>
         
         <div class="controls">
             <button class="btn-connect" onclick="connect()">连接</button>
             <button class="btn-disconnect" onclick="disconnect()">断开</button>
-            <button class="btn-calibrate" onclick="startCalibration()">校准区域</button>
         </div>
         
         <div class="info">
-            <p>服务器地址: <span id="serverUrl">ws://localhost:8765</span></p>
-            <p>帧率: <span id="fps">0</span> FPS</p>
-            <p>延迟: <span id="latency">-</span> ms</p>
+            <p>服务器: <span id="serverUrl">ws://localhost:8765</span></p>
+            <p>FPS: <span id="fps">0</span></p>
         </div>
     </div>
-    
-    <script src="app.js"></script>
+
+    <script>
+        const canvas = document.getElementById('radarCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusEl = document.getElementById('status');
+        const fpsEl = document.getElementById('fps');
+        const serverUrlEl = document.getElementById('serverUrl');
+        
+        let ws = null;
+        let connected = false;
+        let frameCount = 0;
+        let lastFpsTime = Date.now();
+
+        function init() {
+            serverUrlEl.textContent = 'ws://' + window.location.hostname + ':8765';
+            connect();
+        }
+
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) return;
+            
+            const url = 'ws://' + (window.location.hostname || 'localhost') + ':8765';
+            statusEl.className = 'connecting';
+            statusEl.textContent = '连接中...';
+            
+            ws = new WebSocket(url);
+            
+            ws.onopen = () => {
+                connected = true;
+                statusEl.className = 'connected';
+                statusEl.textContent = '已连接';
+            };
+            
+            ws.onclose = () => {
+                connected = false;
+                statusEl.className = 'disconnected';
+                statusEl.textContent = '已断开';
+                setTimeout(connect, 3000);
+            };
+            
+            ws.onerror = () => {
+                statusEl.className = 'disconnected';
+                statusEl.textContent = '连接错误';
+            };
+            
+            ws.onmessage = (event) => {
+                if (event.data instanceof Blob) {
+                    const url = URL.createObjectURL(event.data);
+                    const img = new Image();
+                    img.onload = () => {
+                        ctx.drawImage(img, 0, 0);
+                        URL.revokeObjectURL(url);
+                        updateFps();
+                    };
+                    img.src = url;
+                }
+            };
+        }
+
+        function disconnect() {
+            if (ws) ws.close();
+        }
+
+        function updateFps() {
+            frameCount++;
+            const now = Date.now();
+            if (now - lastFpsTime >= 1000) {
+                fpsEl.textContent = frameCount;
+                frameCount = 0;
+                lastFpsTime = now;
+            }
+        }
+
+        window.onload = init;
+    </script>
 </body>
 </html>
