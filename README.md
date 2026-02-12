@@ -2,31 +2,27 @@
 
 将 Windows 屏幕上任意区域以低延迟实时传输到浏览器。
 
+> **游戏投屏最佳方案**：基于 OBS Studio + obs-websocket
+
 ## 典型用途
 
-- 🎮 游戏小地图/雷达投屏
+- 🎮 游戏小地图/雷达投屏（CS2, Valorant, Apex等）
 - 📊 监控面板投屏
 - 📺 视频/直播流传输
 - 🖥️ 远程屏幕监控
 
-## 架构概览
+## 为什么用 OBS？
 
 ```
-┌─────────────┐    WebSocket    ┌─────────────┐
-│   Windows   │ ───────────────▶ │   浏览器    │
-│  区域采集   │     (JPEG流)     │  (接收显示) │
-└─────────────┘                  └─────────────┘
+直接捕获 ──────✗ 反作弊拦截 / GDI限制
+OBS捕获 ──────✓ 完美兼容所有游戏 / 零兼容问题
 ```
 
-## 核心特性
-
-- ✅ 低延迟视频流传输
-- ✅ 可配置区域裁剪
-- ✅ WebSocket 实时传输
-- ✅ 跨平台浏览器支持
-- ✅ 局域网/跨网络支持
-- 🔄 移动端优化
-- 🔄 多区域同时传输
+**优势**：
+- ✅ 完美兼容所有游戏（包括有反作弊保护的）
+- ✅ 支持任意区域裁剪
+- ✅ 社区成熟，稳定可靠
+- ✅ 低延迟（可配置）
 
 ## 快速开始
 
@@ -37,13 +33,20 @@ cd server/python
 pip install -r requirements.txt
 ```
 
-### 2. 运行采集服务
+### 2. 配置 OBS
+
+1. 下载并安装 [OBS Studio](https://obsproject.com/)
+2. 安装 [obs-websocket 插件](https://github.com/obsproject/obs-websocket/releases)
+3. 打开 OBS，添加"显示器捕获"或"窗口捕获"
+4. 工具 → WebSocket → 确认服务器端口为 4444
+
+### 3. 启动捕获服务
 
 ```bash
-python capture.py
+python obs_client.py
 ```
 
-### 3. 打开浏览器
+### 4. 打开浏览器
 
 访问 `http://localhost:8765`
 
@@ -51,49 +54,71 @@ python capture.py
 
 ```
 screen-region-stream/
-├── server/
-│   ├── python/          # Python采集端
-│   │   ├── capture.py   # 屏幕捕获 + WebSocket服务
-│   │   └── requirements.txt
-│   └── go/              # Go采集端（可选高性能方案）
-├── web/                 # Web接收端
-│   ├── index.html       # 主页面
-│   ├── style.css        # 样式
-│   └── app.js           # WebSocket客户端
-└── docs/                # 文档
+├── server/python/
+│   ├── obs_client.py      # OBS WebSocket客户端
+│   ├── capture.py         # 通用捕获（旧版MSS方案）
+│   └── requirements.txt   # 依赖
+├── web/
+│   ├── index.html         # 接收页面
+│   └── app.js             # WebSocket客户端
+└── docs/
 ```
 
-## 技术栈
+## 依赖
 
-- **采集端**: Python + MSS + OpenCV
-- **传输**: WebSocket (JPEG二进制流)
-- **接收端**: HTML5 + Canvas
+```txt
+obs-websocket-py>=1.6.0
+websocket-client>=1.6.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+websockets>=12.0
+```
 
 ## 配置说明
 
-编辑 `capture.py` 中的 `RADAR_REGION` 自定义捕获区域：
+编辑 `obs_client.py` 中的配置：
 
 ```python
-RADAR_REGION = {
-    "left": 0,      # 左上角X坐标
-    "top": 0,       # 左上角Y坐标
-    "width": 200,   # 区域宽度
-    "height": 200  # 区域高度
-}
+OBS_HOST = "localhost"
+OBS_PORT = 4444
+OBS_PASSWORD = ""  # 如有密码
+
+WEBSOCKET_HOST = "0.0.0.0"
+WEBSOCKET_PORT = 8765
 ```
 
-或在浏览器中点击"校准区域"手动选择。
+## 延迟优化
+
+| 配置 | 效果 |
+|-----|------|
+| 减小截图尺寸 | 降低带宽和延迟 |
+| 调整OBS输出编码 | NVENC/QuickSync最优 |
+| 局域网传输 | WiFi可能有不稳定 |
+
+## 故障排除
+
+**无法连接OBS？**
+- 检查OBS是否运行
+- 检查obs-websocket插件是否安装
+- 确认端口4444未被占用
+
+**游戏画面黑屏？**
+- 在OBS中重新添加捕获源
+- 尝试"窗口捕获"而非"显示器捕获"
+- 以管理员运行OBS
+
+**延迟太高？**
+- 减小截图尺寸（imageWidth/imageHeight）
+- 使用有线网络
+- 关闭不必要的后台程序
 
 ## TODO
 
-- [x] 基础屏幕捕获
-- [x] WebSocket 传输
-- [x] 浏览器接收显示
-- [ ] 延迟测试与优化 (<100ms目标)
-- [ ] 自动区域识别
-- [ ] 移动端适配
-- [ ] 信令服务器（跨网络传输）
-- [ ] 多区域支持
+- [x] OBS WebSocket 客户端
+- [x] 浏览器接收端
+- [ ] 自动重连
+- [ ] 多来源支持
+- [ ] 延迟测试与优化
 
 ## 许可证
 
