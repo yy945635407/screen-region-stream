@@ -1,5 +1,5 @@
 """
-OBS WebSocket Client - 接收OBS画面流并转发到Web浏览器
+OBS WebSocket Client + HTTP Server - 接收OBS画面流并转发到Web浏览器
 
 依赖:
     pip install obs-websocket-py websocket-client numpy opencv-python
@@ -14,22 +14,22 @@ OBS配置:
 import asyncio
 import json
 import base64
-import numpy as np
-import cv2
-import websockets
+import os
+import threading
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from typing import Optional
 from obswebsocket import obsws, requests
 
-# 配置
+# ============== 配置 ==============
 OBS_HOST = "localhost"
-OBS_PORT = 4455  # v5 API 默认端口 (旧版v4是4444)
-OBS_PASSWORD = ""  # 如有密码则填写
+OBS_PORT = 4455  # v5 API 默认端口
+OBS_PASSWORD = ""
 
-WEBSOCKET_HOST = "0.0.0.0"
-WEBSOCKET_PORT = 8765
-JPEG_QUALITY = 85
+HTTP_HOST = "0.0.0.0"
+HTTP_PORT = 8080  # 浏览器访问这个端口
 
-# 区域配置
+WEBSOCKET_PORT = 8765  # 内部WebSocket端口
+
 CROP_REGION = {
     "left": 0,
     "top": 0,
@@ -37,7 +37,28 @@ CROP_REGION = {
     "height": 200
 }
 
+# ============== HTTP 服务器 ==============
+class QuietHTTPHandler(SimpleHTTPRequestHandler):
+    """静默HTTP处理器"""
+    def log_message(self, format, *args):
+        pass  # 抑制日志
 
+    def do_GET(self):
+        if self.path == '/' or self.path == '/index.html':
+            self.path = '/web/index.html'
+        return SimpleHTTPRequestHandler.do_GET(self)
+
+
+def start_http_server():
+    """启动HTTP服务器"""
+    # 切换到项目根目录
+    os.chdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    server = HTTPServer((HTTP_HOST, HTTP_PORT), QuietHTTPHandler)
+    print(f"📺 HTTP服务器: http://localhost:{HTTP_PORT}")
+    server.serve_forever()
+
+
+# ============== OBS 捕获 ==============
 class OBSCapture:
     """OBS捕获器"""
     
@@ -54,23 +75,18 @@ class OBSCapture:
     def connect(self) -> bool:
         """连接OBS"""
         try:
-            print(f"连接OBS: ws://{OBS_HOST}:{OBS_PORT}...")
+            print(f"🔌 连接OBS: ws://{OBS_HOST}:{OBS_PORT}...")
             self.ws = obsws(OBS_HOST, OBS_PORT, OBS_PASSWORD)
             self.ws.connect()
             self.obs_connected = True
-            print("✓ 已连接OBS")
+            print(f"✅ 已连接OBS")
             
-            # 测试连接
             version = self.ws.call(requests.GetVersion())
             print(f"  OBS版本: {version.getObsVersion()}")
             
             return True
         except Exception as e:
-            print(f"✗ 连接OBS失败: {e}")
-            print("\n请检查:")
-            print("  1. OBS是否运行")
-            print("  2. obs-websocket插件是否安装")
-            print(f"  3. WebSocket端口是否为{OBS_PORT}")
+            print(f"❌ 连接OBS失败: {e}")
             return False
     
     async def capture_frame(self) -> Optional[bytes]:
@@ -79,9 +95,9 @@ class OBSCapture:
             return None
         
         try:
-            # 获取截图 (使用v5 API)
+            # 获取截图
             result = self.ws.call(requests.GetSourceScreenshot(
-                sourceName="场景",  # 修改为你的来源名称
+                sourceName="场景",
                 imageFormat="jpeg",
                 imageWidth=320,
                 imageHeight=240
@@ -91,11 +107,10 @@ class OBSCapture:
                 return base64.b64decode(result.imageData)
                 
         except Exception as e:
-            # 连接可能断开
             if "not connected" in str(e).lower():
                 self.obs_connected = False
-            # 可能是来源名称错误，尝试通用方式
             try:
+                # 尝试不使用来源名称
                 result = self.ws.call(requests.GetSourceScreenshot(
                     imageFormat="jpeg",
                     imageWidth=320,
@@ -120,7 +135,7 @@ class OBSCapture:
     async def handler(self, websocket):
         """Web客户端处理"""
         self.clients.add(websocket)
-        print(f"客户端连接: {websocket.remote_address}")
+        print(f"🌐 客户端连接: {websocket.remote_address}")
         try:
             async for message in websocket:
                 if isinstance(message, str):
@@ -135,12 +150,11 @@ class OBSCapture:
         finally:
             self.clients.discard(websocket)
     
-    async def start_server(self):
-        """启动服务器"""
+    async def start_websocket_server(self):
+        """启动WebSocket服务器"""
         self.running = True
-        async with websockets.serve(self.handler, WEBSOCKET_HOST, WEBSOCKET_PORT):
-            print(f"\n🚀 Web服务器启动: ws://{WEBSOCKET_HOST}:{WEBSOCKET_PORT}")
-            print(f"📺 浏览器访问: http://localhost:{WEBSOCKET_PORT-8765+80} (如8765→8080)")
+        async with websockets.serve(self.handler, HTTP_HOST, WEBSOCKET_PORT):
+            print(f"🚀 WebSocket服务器: ws://{HTTP_HOST}:{WEBSOCKET_PORT}")
             await asyncio.Future()
     
     async def stream_loop(self, interval: float = 0.1):
@@ -153,13 +167,12 @@ class OBSCapture:
                     await self.broadcast(frame)
                     self.frame_count += 1
                     
-                    # FPS统计
                     now = time.time()
                     if now - self.last_fps_time >= 1.0:
                         self.fps = self.frame_count
                         self.frame_count = 0
                         self.last_fps_time = now
-                        print(f"FPS: {self.fps}")
+                        print(f"📊 FPS: {self.fps}")
                 
                 await asyncio.sleep(interval)
             except Exception as e:
@@ -172,8 +185,8 @@ class OBSCapture:
             self.ws.disconnect()
 
 
+# ============== 主入口 ==============
 async def main():
-    """主入口"""
     import time
     
     capture = OBSCapture()
@@ -182,10 +195,14 @@ async def main():
     if not capture.connect():
         return
     
+    # 启动HTTP服务器（后台线程）
+    http_thread = threading.Thread(target=start_http_server, daemon=True)
+    http_thread.start()
+    
     try:
         await asyncio.gather(
-            capture.start_server(),
-            capture.stream_loop(interval=0.1)  # 10 FPS
+            capture.start_websocket_server(),
+            capture.stream_loop(interval=0.1)
         )
     except KeyboardInterrupt:
         print("\n停止...")
@@ -193,4 +210,7 @@ async def main():
 
 
 if __name__ == "__main__":
+    print("=" * 50)
+    print("🎮 Screen Region Stream - OBS投屏方案")
+    print("=" * 50)
     asyncio.run(main())
